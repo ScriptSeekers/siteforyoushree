@@ -2,100 +2,16 @@
   const KEY = "arpit_exam_prep_v1";
   const DATA = window.EXAM_DATA;
   let state = loadState();
-  let supabaseClient = null;
-  let currentUser = null;
-  let progressChannel = null;
-  let applyingRemote = false;
 
   function loadState(){
     try { return JSON.parse(localStorage.getItem(KEY)) || {done:{}}; }
     catch(e){ return {done:{}}; }
   }
-  function setStatus(message){
-    const el = document.getElementById("saveStatus");
-    if(el) el.textContent = message;
-  }
-  async function saveState(){
+  function saveState(){
     localStorage.setItem(KEY, JSON.stringify(state));
-    setStatus(currentUser ? "Saving to cloud…" : "Saved on this device");
+    const el = document.getElementById("saveStatus");
+    if(el) el.textContent = "Saved just now";
     renderAll();
-    if(currentUser && supabaseClient && !applyingRemote){
-      const { error } = await supabaseClient.from("study_progress").upsert({
-        user_id: currentUser.id, progress: state, updated_at: new Date().toISOString()
-      }, { onConflict: "user_id" });
-      if(error){ setStatus("Cloud save failed"); showAuthMessage("Cloud save failed: " + error.message); }
-      else setStatus("Synced just now");
-    }
-  }
-  function showAuthMessage(message){
-    const el=document.getElementById("authMessage"); if(el) el.textContent=message;
-  }
-  function setAuthenticatedUI(user){
-    currentUser=user;
-    const form=document.getElementById("authForm"), actions=document.getElementById("signedInActions");
-    const email=document.getElementById("accountEmail"), stateEl=document.getElementById("accountState");
-    if(form) form.hidden=!!user;
-    if(actions) actions.hidden=!user;
-    if(email) email.textContent=user ? user.email : "";
-    if(stateEl) stateEl.textContent=user ? "Signed in · progress sync is enabled" : "Sign in to sync progress across your devices.";
-    setStatus(user ? "Connecting to cloud…" : "Saved on this device");
-  }
-  async function connectAccount(user){
-    setAuthenticatedUI(user);
-    if(!user) return;
-    const { data, error } = await supabaseClient.from("study_progress").select("progress").eq("user_id",user.id).maybeSingle();
-    if(error){ showAuthMessage("Could not load cloud progress: " + error.message); return; }
-    if(data && data.progress && data.progress.done){
-      state={done:data.progress.done}; localStorage.setItem(KEY,JSON.stringify(state)); renderAll();
-      showAuthMessage("Your latest cloud progress has been loaded on this device.");
-    } else {
-      const { error: saveError } = await supabaseClient.from("study_progress").upsert({user_id:user.id,progress:state,updated_at:new Date().toISOString()},{onConflict:"user_id"});
-      if(saveError) showAuthMessage("Could not create cloud progress: " + saveError.message);
-      else showAuthMessage("Cloud sync is ready. This device's existing progress was uploaded.");
-    }
-    if(progressChannel) await supabaseClient.removeChannel(progressChannel);
-    progressChannel=supabaseClient.channel("progress-"+user.id)
-      .on("postgres_changes",{event:"UPDATE",schema:"public",table:"study_progress",filter:"user_id=eq."+user.id},payload=>{
-        if(payload.new && payload.new.progress && payload.new.progress.done){
-          applyingRemote=true; state={done:payload.new.progress.done}; localStorage.setItem(KEY,JSON.stringify(state)); renderAll(); applyingRemote=false;
-          setStatus("Updated from another device"); showAuthMessage("A progress update from another device has been received.");
-        }
-      }).subscribe();
-    setStatus("Synced");
-  }
-  async function initCloudSync(){
-    const cfg=window.SUPABASE_CONFIG||{};
-    const configured=cfg.url && cfg.anonKey && !cfg.url.includes("YOUR_") && !cfg.anonKey.includes("YOUR_");
-    const buttons=["signInBtn","signUpBtn"];
-    if(!configured || !window.supabase){
-      buttons.forEach(id=>{const b=document.getElementById(id);if(b)b.disabled=true;});
-      showAuthMessage("Cloud sync is not configured yet. Add your Supabase project URL and anon key in supabase-config.js.");
-      return;
-    }
-    supabaseClient=window.supabase.createClient(cfg.url,cfg.anonKey);
-    document.getElementById("signInBtn").addEventListener("click",async()=>{
-      const email=document.getElementById("authEmail").value.trim(), password=document.getElementById("authPassword").value;
-      if(!email||!password){showAuthMessage("Enter your email and password.");return;}
-      const {data,error}=await supabaseClient.auth.signInWithPassword({email,password});
-      if(error){showAuthMessage(error.message);return;} await connectAccount(data.user);
-    });
-    document.getElementById("signUpBtn").addEventListener("click",async()=>{
-      const email=document.getElementById("authEmail").value.trim(), password=document.getElementById("authPassword").value;
-      if(!email||password.length<6){showAuthMessage("Enter a valid email and a password with at least 6 characters.");return;}
-      const {data,error}=await supabaseClient.auth.signUp({email,password});
-      if(error){showAuthMessage(error.message);return;}
-      if(data.session) await connectAccount(data.user);
-      else showAuthMessage("Account created. Check your email to confirm it, then sign in here.");
-    });
-    document.getElementById("signOutBtn").addEventListener("click",async()=>{
-      if(progressChannel) await supabaseClient.removeChannel(progressChannel);
-      await supabaseClient.auth.signOut(); setAuthenticatedUI(null); showAuthMessage("Signed out. This device's local copy remains available.");
-    });
-    const {data:{session}}=await supabaseClient.auth.getSession();
-    if(session) await connectAccount(session.user); else setAuthenticatedUI(null);
-    supabaseClient.auth.onAuthStateChange(async(event,session)=>{
-      if(event==="SIGNED_OUT") setAuthenticatedUI(null);
-    });
   }
   function allChapters(){
     return DATA.subjects.flatMap(s => s.chapters.map((c,i)=>({id:`${s.id}-${i}`,subject:s,chapter:c,index:i})));
@@ -202,5 +118,4 @@
     state={done:{}}; saveState();
   };
   renderAll();
-  initCloudSync();
 })();
